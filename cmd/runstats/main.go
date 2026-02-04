@@ -87,6 +87,9 @@ func pi(n int, icon string, text string) {
 }
 
 func ps(s string, icon string, text string) {
+	if s == "" {
+		return
+	}
 	sep := "\u2003"
 	if text != "" {
 		fmt.Printf("%s%s%s: %s\n", icon, sep, text, s)
