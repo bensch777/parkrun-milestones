@@ -1,90 +1,61 @@
-[![PkgGoDev](https://pkg.go.dev/badge/github.com/flopp/go-staticmaps)](https://pkg.go.dev/github.com/flopp/parkrun-milestones)
-[![Go Report Card](https://goreportcard.com/badge/github.com/flopp/parkrun-milestones)](https://goreportcard.com/report/flopp/parkrun-milestones)
-[![License MIT](https://img.shields.io/badge/license-MIT-lightgrey.svg?style=flat)](https://github.com/flopp/parkrun-milestones/)
-
 # parkrun-milestones
 
-Try to determine milestone candidates to the next run at a parkrun event.
+Sendet jeden Freitag eine Telegram-Nachricht mit den Milestone-Kandidaten für den nächsten [Krupunder See parkrun](https://www.parkrun.com.de/krupundersee/).
 
-## Commands
+Als Milestone-Kandidat gilt, wer beim nächsten Lauf eine Jubiläumszahl erreicht (25, 50, 100, 150, 200, ...) und in mindestens 30% der letzten 10 Läufe aktiv war.
 
-### parkrun-events
+## Einrichtung
 
-You can use this command to search for events (e.g. in order to find out the id of a specific event).
+### 1. Binary bauen
 
-Example:
-
-```
-$ ./parkrun-events east 
-┌────────────────────┬────────────────────────────────┬────────────────┐
-│ EVENT ID           │ EVENT NAME                     │ COUNTRY        │
-├────────────────────┼────────────────────────────────┼────────────────┤
-│ eastbourne         │ Eastbourne parkrun             │ United Kingdom │
-│ eastbourne-juniors │ Eastbourne junior parkrun      │ United Kingdom │
-│ eastbrighton       │ East Brighton parkrun          │ United Kingdom │
-│ eastcoastbrewery   │ East Coast Brewery parkrun     │ South Africa   │
-│ eastcoastpark      │ East Coast Park parkrun        │ Singapore      │
-│ eastend            │ East End parkrun, New Plymouth │ New Zealand    │
-│ easterngardens     │ Eastern Gardens parkrun        │ Australia      │
-│ eastgrinstead      │ East Grinstead parkrun         │ United Kingdom │
-│ eastleigh          │ Eastleigh parkrun              │ United Kingdom │
-│ eastney-juniors    │ Eastney junior parkrun         │ United Kingdom │
-│ eastpark           │ East Park parkrun              │ United Kingdom │
-│ eastrichmond       │ East Richmond parkrun          │ Australia      │
-│ eastville          │ Eastville parkrun              │ United Kingdom │
-│ eastville-juniors  │ Eastville junior parkrun       │ United Kingdom │
-│ reynellaeast       │ Reynella East parkrun          │ Australia      │
-│ somerseteast       │ Somerset East parkrun          │ South Africa   │
-└────────────────────┴────────────────────────────────┴────────────────┘
+```bash
+make build
 ```
 
-### parkrun-milestones
+### 2. Config anlegen
 
-Determine possible milestone candidates for the next run of a given event.
-A milestone candidate is a runner or volunteer, who will probably have a milestone number of runs or volunteerings (25, 50, 100, 250, 500) at the upcoming run, and who was active (running or volunteering) in at least 30% (parameter `-active`) the last 10 runs of the event (parameter `-runs`).
-
-Example:
-
-```
-$ ./parkrun-milestones eastville
-┌───────────────────────────────────────────────────────┐
-│ Expected Milestones at                                │
-│ Eastville parkrun                                     │
-│ Run #178                                              │
-├────────────────────────────────┬──────┬──────┬────────┤
-│ NAME                           │ RUNS │ VOLS │ ACTIVE │
-├────────────────────────────────┼──────┼──────┼────────┤
-│ Darren CLINTON                 │  *49 │    6 │ 4/10   │
-│ Elena THODE MINGUET            │  *99 │    9 │ 5/10   │
-│ Helen SAWYER                   │  193 │  *49 │ 4/10   │
-│ James HARRISON                 │  *99 │  134 │ 6/10   │
-│ James RODLIFF                  │  *99 │   13 │ 3/10   │
-│ Joseph BRAZIER                 │  *49 │    0 │ 7/10   │
-│ Philip SIM                     │  *49 │    0 │ 4/10   │
-│ Rosie BURROWS                  │  *24 │  114 │ 5/10   │
-└────────────────────────────────┴──────┴──────┴────────┘
+```bash
+mkdir -p ~/.config/parkrun-milestones
+cp config.yaml.example ~/.config/parkrun-milestones/config.yaml
 ```
 
-### parkrun-runstats
-Prints the stats of the latest run in list format; suitable for sharing in text-based social media (mastodon, twitter, etc.).
+Dann `~/.config/parkrun-milestones/config.yaml` bearbeiten und Telegram-Zugangsdaten eintragen:
 
-Example:
+```yaml
+events:
+  - krupundersee
+
+telegram_bot_token: "123456789:ABC..."
+telegram_chat_id: "-987654321"
+```
+
+> **Telegram-Bot erstellen:** Bei `@BotFather` mit `/newbot` → Token kopieren.  
+> **Chat-ID einer Gruppe:** Bot in die Gruppe einladen, dann Chat-URL prüfen (`#-XXXXXXXXX`).
+
+### 3. Automatisch freitags ausführen (macOS LaunchAgent)
+
+Der LaunchAgent läuft jeden Freitag um 20:00 Uhr und ist unter
+`~/Library/LaunchAgents/com.bensch.parkrun-milestones.plist` eingerichtet.
+
+## Manuell ausführen
+
+```bash
+./.bin/parkrun-milestones
+```
+
+Mit `-force` werden alle gecachten Daten neu geladen:
+
+```bash
+./.bin/parkrun-milestones -force
+```
+
+## Beispiel-Nachricht
 
 ```
-$ ./parkrun-runstats -fancy bushy
-Bushy parkrun
-#️⃣ 902
-📅 2022-11-12
-🏃 Runners: 1154
-  ⏱ new PB: 108
-  🧳 first visitors: 111
-  ⭐️ new parkrunners: 37
-  🏆 25. run anniversary: 7
-  🏆 50. run anniversary: 6
-  🏆 100. run anniversary: 3
-🦺 Volunteers: 69
-  ⭐️ new volunteers: 6
-  🏆 25. vol. anniversary: 1
-  🏆 100. vol. anniversary: 1
-👀 https://www.parkrun.org.uk/bushy/results/902/
+🏃 Milestone-Vorschau: Krupunder See parkrun – Lauf #63
+
+🎯 Ben RATHMANN – Läufe: 24 → 25 ⭐
+🎯 Benjamin NESKE – Läufe: 24 → 25 ⭐
+
+Aktivität: letzte 10 Läufe berücksichtigt
 ```
