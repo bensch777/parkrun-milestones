@@ -1,132 +1,153 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"html"
+	"io"
+	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	parkrun "github.com/flopp/parkrun-milestones/internal/parkrun"
-	"github.com/jedib0t/go-pretty/v6/table"
-	"github.com/jedib0t/go-pretty/v6/text"
+	"gopkg.in/yaml.v3"
 )
 
-func formatMilestone(number int64) string {
-	s := fmt.Sprintf("%d", number)
-	if parkrun.Milestone(number + 1) {
-		return "*" + s
-	}
-	return s
+type Config struct {
+	Events         []string `yaml:"events"`
+	TelegramToken  string   `yaml:"telegram_bot_token"`
+	TelegramChatID string   `yaml:"telegram_chat_id"`
+	MinActiveRatio float64  `yaml:"min_active_ratio"`
+	Runs           uint64   `yaml:"runs"`
 }
 
-const (
-	usage = `USAGE: %s [OPTIONS...] [EVENTID...]
-Determine the milestone candidates of the specified event(s) or
-of all events of a county (if -country NAME is given). 
-
-OPTIONS:
-`
-)
-
-type CommandLineOptions struct {
-	forceReload    bool
-	minActiveRatio float64
-	runs           uint64
-	country        string
-	eventIds       []string
+func defaultConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "config.yaml"
+	}
+	return filepath.Join(home, ".config", "parkrun-milestones", "config.yaml")
 }
 
-func parseCommandLine() CommandLineOptions {
-	forceReload := flag.Bool("force", false, "force reload of all data")
-	minActiveRatio := flag.Float64("active", 0.3, "minimum active ratio")
-	runs := flag.Uint64("runs", 10, "consider at most the X latest runs of the event")
-	country := flag.String("country", "", "select all events of the specified country")
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), usage, os.Args[0])
-		flag.PrintDefaults()
+func loadConfig(path string) (Config, error) {
+	cfg := Config{
+		MinActiveRatio: 0.3,
+		Runs:           10,
 	}
-	flag.Parse()
-	if *minActiveRatio < 0.0 || *minActiveRatio > 1.0 {
-		panic(fmt.Errorf("invalid -active value: %f; must be between 0 and 1", *minActiveRatio))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return cfg, fmt.Errorf("config-Datei nicht gefunden (%s): %w", path, err)
 	}
-	if *country == "" && len(flag.Args()) == 0 {
-		panic("You have to specify either one or more EVENTID... or -country NAME")
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return cfg, fmt.Errorf("ungültige config: %w", err)
 	}
-	if *country != "" && len(flag.Args()) != 0 {
-		panic("You must not specify both one or more EVENTID... and -country NAME")
+	if len(cfg.Events) == 0 {
+		return cfg, fmt.Errorf("keine Events in der config-Datei angegeben")
 	}
-
-	return CommandLineOptions{
-		*forceReload, *minActiveRatio, *runs, *country, flag.Args(),
+	if cfg.TelegramToken == "" || cfg.TelegramChatID == "" {
+		return cfg, fmt.Errorf("telegram_bot_token und telegram_chat_id müssen in der config-Datei gesetzt sein")
 	}
+	return cfg, nil
 }
 
-func getEvents(eventIds []string, country string) []*parkrun.Event {
-	events := make([]*parkrun.Event, 0)
-	for _, eventId := range eventIds {
-		event, err := parkrun.LookupEvent(eventId)
-		if err != nil {
-			panic(err)
-		}
-		events = append(events, event)
+func sendTelegram(token, chatID, message string) error {
+	type payload struct {
+		ChatID    string `json:"chat_id"`
+		Text      string `json:"text"`
+		ParseMode string `json:"parse_mode"`
 	}
-	if country != "" {
-		eventList, err := parkrun.AllEvents()
-		if err != nil {
-			panic(err)
-		}
-		lowerCountry := strings.TrimSpace(strings.ToLower(country))
-		for _, event := range eventList {
-			if strings.ToLower(event.Country) == lowerCountry {
-				events = append(events, event)
+	body, err := json.Marshal(payload{ChatID: chatID, Text: message, ParseMode: "HTML"})
+	if err != nil {
+		return err
+	}
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
+	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("Telegram API Fehler: %s – %s", resp.Status, string(respBody))
+	}
+	return nil
+}
+
+func milestoneLabel(current int64) string {
+	return fmt.Sprintf("%d → <b>%d</b> ⭐", current, current+1)
+}
+
+func buildMessage(event *parkrun.Event, parkrunners []*parkrun.Parkrunner, examinedRuns uint64) string {
+	junior := event.IsJuniorParkrun()
+	nextRun := len(event.Runs) + 1
+
+	var milestones []string
+	for _, p := range parkrunners {
+		var parts []string
+		if junior {
+			if parkrun.Milestone(p.JuniorRuns + 1) {
+				parts = append(parts, "Läufe: "+milestoneLabel(p.JuniorRuns))
+			}
+		} else {
+			if parkrun.Milestone(p.Runs + 1) {
+				parts = append(parts, "Läufe: "+milestoneLabel(p.Runs))
 			}
 		}
+		if parkrun.Milestone(p.Vols + 1) {
+			parts = append(parts, "Ehrenamt: "+milestoneLabel(p.Vols))
+		}
+		if len(parts) > 0 {
+			milestones = append(milestones, fmt.Sprintf("🎯 %s – %s", html.EscapeString(p.Name), strings.Join(parts, ", ")))
+		}
 	}
-	return events
+
+	header := fmt.Sprintf("🏃 <b>Milestone-Vorschau: %s – Lauf #%d</b>", html.EscapeString(event.Name), nextRun)
+	if len(milestones) == 0 {
+		return header + "\n\nKeine Meilensteine diese Woche."
+	}
+	return header + "\n\n" + strings.Join(milestones, "\n") +
+		fmt.Sprintf("\n\n<i>Aktivität: letzte %d Läufe berücksichtigt</i>", examinedRuns)
 }
 
 func main() {
-	options := parseCommandLine()
+	configPath := flag.String("config", defaultConfigPath(), "Pfad zur config.yaml")
+	forceReload := flag.Bool("force", false, "Alle gecachten Daten neu laden")
+	flag.Parse()
 
-	if options.forceReload {
+	cfg, err := loadConfig(*configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Fehler:", err)
+		os.Exit(1)
+	}
+
+	if *forceReload {
 		parkrun.MaxFileAge = 0
 	}
 
-	events := getEvents(options.eventIds, options.country)
-	for _, event := range events {
-		fmt.Printf("-- Fetching data for %s...\n", event.Name)
-		parkrunners, examinedRuns, err := event.GetActiveParkrunners(options.minActiveRatio, options.runs)
+	for _, eventId := range cfg.Events {
+		event, err := parkrun.LookupEvent(eventId)
 		if err != nil {
-			panic(err)
+			fmt.Fprintf(os.Stderr, "Event %q: %v\n", eventId, err)
+			continue
 		}
 
-		junior := event.IsJuniorParkrun()
-
-		t := table.NewWriter()
-		t.SetStyle(table.StyleLight)
-		t.SetOutputMirror(os.Stdout)
-		t.SetTitle(fmt.Sprintf("Expected Milestones at\n%s\nRun #%d", event.Name, len(event.Runs)+1))
-		t.AppendHeader(table.Row{"Name", "Runs", "Vols", "Active"})
-		if junior {
-			for _, parkrunner := range parkrunners {
-				if parkrun.Milestone(parkrunner.JuniorRuns+1) || parkrun.Milestone(parkrunner.Vols+1) {
-					t.AppendRow([]interface{}{parkrunner.Name, formatMilestone(parkrunner.JuniorRuns), formatMilestone(parkrunner.Vols), fmt.Sprintf("%d/%d", len(parkrunner.Active), examinedRuns)})
-				}
-			}
-		} else {
-			for _, parkrunner := range parkrunners {
-				if parkrun.Milestone(parkrunner.Runs+1) || parkrun.Milestone(parkrunner.Vols+1) {
-					t.AppendRow([]interface{}{parkrunner.Name, formatMilestone(parkrunner.Runs), formatMilestone(parkrunner.Vols), fmt.Sprintf("%d/%d", len(parkrunner.Active), examinedRuns)})
-				}
-			}
+		fmt.Printf("Lade Daten für %s...\n", event.Name)
+		parkrunners, examinedRuns, err := event.GetActiveParkrunners(cfg.MinActiveRatio, cfg.Runs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Event %q: %v\n", eventId, err)
+			continue
 		}
-		t.SetColumnConfigs([]table.ColumnConfig{
-			{Number: 1, WidthMin: 30, AlignHeader: text.AlignLeft},
-			{Number: 2, WidthMin: 4, Align: text.AlignRight, AlignHeader: text.AlignLeft},
-			{Number: 3, WidthMin: 4, Align: text.AlignRight, AlignHeader: text.AlignLeft},
-			{Number: 4, WidthMin: 5, Align: text.AlignRight, AlignHeader: text.AlignLeft},
-		})
-		t.Render()
-		fmt.Println()
+
+		msg := buildMessage(event, parkrunners, examinedRuns)
+		fmt.Println(msg)
+
+		if err := sendTelegram(cfg.TelegramToken, cfg.TelegramChatID, msg); err != nil {
+			fmt.Fprintf(os.Stderr, "Telegram-Fehler: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Telegram-Nachricht gesendet.")
 	}
 }

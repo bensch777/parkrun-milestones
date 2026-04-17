@@ -1,0 +1,13 @@
+-- Fetching data for Krupunder See parkrun...
+-- Fetching the latest 10 result lists...
+-- Updating 4 incomplete parkrunners...
+┌───────────────────────────────────────────────────────┐
+│ Expected Milestones at                                │
+│ Krupunder See parkrun                                 │
+│ Run #62                                               │
+├────────────────────────────────┬──────┬──────┬────────┤
+│ NAME                           │ RUNS │ VOLS │ ACTIVE │
+├────────────────────────────────┼──────┼──────┼────────┤
+│ Benjamin NESKE                 │   23 │  *49 │  10/10 │
+└────────────────────────────────┴──────┴──────┴────────┘
+
